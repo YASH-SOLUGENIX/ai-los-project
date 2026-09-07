@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     container_name: los-postgres
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - los-postgres-data:/var/lib/postgresql/data
+      - cf8deac34eb6e09cf25eca4a57ed77a50d1b4cf16940301b75c20bb8fd081181:/var/lib/postgresql/data
 
   keycloak:
     image: quay.io/keycloak/keycloak:latest
@@ -26,4 +26,5 @@ services:
       - postgres
 
 volumes:
-  los-postgres-data:
+  cf8deac34eb6e09cf25eca4a57ed77a50d1b4cf16940301b75c20bb8fd081181:
+    external: true

@@ -13,6 +13,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { EligibilityModule } from './eligibility/eligibility.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { DecisionsModule } from './decisions/decisions.module';
+import { AiModule } from './ai/ai.module';
 
 
 @Module({
@@ -39,6 +40,7 @@ import { DecisionsModule } from './decisions/decisions.module';
     EligibilityModule,
     ReviewsModule,
     DecisionsModule,
+    AiModule,
   ],
   // controllers: [AppController, HeatlhController],
   // providers: [AppService],
