@@ -15,6 +15,7 @@ import { LoanProduct } from '../loan-products/entities/loan-product.entity';
     ]),
   ],
   controllers: [EligibilityController],
-  providers: [EligibilityService],
+ providers: [EligibilityService],
+exports: [EligibilityService],
 })
 export class EligibilityModule {}

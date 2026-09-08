@@ -30,7 +30,7 @@ import { AiModule } from './ai/ai.module';
       database: process.env.DB_NAME,
 
       autoLoadEntities: true,
-      synchronize: true,
+      synchronize: false,
     }),
     HealthModule,
     AuthModule,

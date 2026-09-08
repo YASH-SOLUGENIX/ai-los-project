@@ -1,5 +1,6 @@
 export const aiSummarySchema = {
   type: 'object',
+
   properties: {
     facts: {
       type: 'array',
@@ -22,6 +23,20 @@ export const aiSummarySchema = {
       },
     },
 
+    risks: {
+      type: 'array',
+      items: {
+        type: 'string',
+      },
+    },
+
+    sourceReferences: {
+      type: 'array',
+      items: {
+        type: 'string',
+      },
+    },
+
     summary: {
       type: 'string',
     },
@@ -31,6 +46,8 @@ export const aiSummarySchema = {
     'facts',
     'missing',
     'inconsistencies',
+    'risks',
+    'sourceReferences',
     'summary',
   ],
 

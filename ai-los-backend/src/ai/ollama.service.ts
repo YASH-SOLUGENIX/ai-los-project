@@ -29,7 +29,7 @@ export class OllamaService {
 
     const timeout = setTimeout(() => {
       controller.abort();
-    }, 60_000);
+    }, 120_000);
 
     try {
       const response = await fetch(`${this.baseUrl}/api/generate`, {

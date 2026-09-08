@@ -14,15 +14,16 @@ import { Roles } from './decorators/roles.decorator';
 import type { AuthenticatedRequest } from './types/authenticated-request.interface';
 
 import { KeycloakAdminService } from './keycloak-admin.service';
-
+import { KeycloakAuthService } from './keycloak-auth.service';
 import { RegisterDto } from './dto/register.dto';
 
 @Controller('auth')
 export class AuthController {
 
   constructor(
-    private readonly keycloakAdminService: KeycloakAdminService,
-  ) {}
+  private readonly keycloakAdminService: KeycloakAdminService,
+  private readonly keycloakAuthService: KeycloakAuthService,
+) {}
 
   @Get('me')
   @UseGuards(KeycloakAuthGuard)
@@ -74,5 +75,20 @@ const user = await this.keycloakAdminService.createUser(
   return {
     message: 'Customer registered successfully',
   };
+}
+
+
+@Post('login')
+async login(
+  @Body()
+  body: {
+    username: string;
+    password: string;
+  },
+) {
+  return this.keycloakAuthService.login(
+    body.username,
+    body.password,
+  );
 }
 }

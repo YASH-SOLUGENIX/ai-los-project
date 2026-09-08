@@ -137,4 +137,109 @@ export class EligibilityService {
       },
     };
   }
+
+  async getDeterministicResult(
+  applicationId: number,
+  age: number,
+  monthlyIncome: number,
+  monthlyObligations: number,
+) {
+  const application = await this.applicationRepository.findOne({
+    where: {
+      id: applicationId,
+    },
+  });
+
+  if (!application) {
+    throw new NotFoundException('Application not found');
+  }
+
+  const loanProduct = await this.loanProductRepository.findOne({
+    where: {
+      id: application.loanProductId,
+      isActive: true,
+    },
+  });
+
+  if (!loanProduct) {
+    throw new NotFoundException('Loan product not found');
+  }
+
+  const reasonCodes: string[] = [];
+
+  if (age < 21) {
+    reasonCodes.push('AGE_BELOW_MINIMUM');
+  }
+
+  if (application.requestedAmount < loanProduct.minAmount) {
+    reasonCodes.push('AMOUNT_BELOW_MINIMUM');
+  }
+
+  if (application.requestedAmount > loanProduct.maxAmount) {
+    reasonCodes.push('AMOUNT_ABOVE_MAXIMUM');
+  }
+
+  if (
+    application.requestedTenureMonths <
+    loanProduct.minTenureMonths
+  ) {
+    reasonCodes.push('TENURE_BELOW_MINIMUM');
+  }
+
+  if (
+    application.requestedTenureMonths >
+    loanProduct.maxTenureMonths
+  ) {
+    reasonCodes.push('TENURE_ABOVE_MAXIMUM');
+  }
+
+  const monthlyInterestRate =
+    Number(loanProduct.interestRate) / 12 / 100;
+
+  const numberOfMonths =
+    application.requestedTenureMonths;
+
+  const principal =
+    Number(application.requestedAmount);
+
+  const emi =
+    monthlyInterestRate === 0
+      ? principal / numberOfMonths
+      : (principal *
+          monthlyInterestRate *
+          Math.pow(
+            1 + monthlyInterestRate,
+            numberOfMonths,
+          )) /
+        (Math.pow(
+          1 + monthlyInterestRate,
+          numberOfMonths,
+        ) - 1);
+
+  const dti =
+    ((monthlyObligations + emi) /
+      monthlyIncome) *
+    100;
+
+  const maxDti = 50;
+
+  if (dti > maxDti) {
+    reasonCodes.push('DTI_ABOVE_LIMIT');
+  }
+
+  return {
+    eligible: reasonCodes.length === 0,
+    reasonCodes,
+    details: {
+      age,
+      requestedAmount: principal,
+      requestedTenureMonths: numberOfMonths,
+      estimatedEmi: Number(emi.toFixed(2)),
+      monthlyIncome,
+      monthlyObligations,
+      dti: Number(dti.toFixed(2)),
+      maxDti,
+    },
+  };
+}
 }
