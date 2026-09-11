@@ -14,14 +14,18 @@ import { EligibilityModule } from './eligibility/eligibility.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { DecisionsModule } from './decisions/decisions.module';
 import { AiModule } from './ai/ai.module';
-
+import { ClarificationsModule } from './clarifications/clarifications.module';
+import { AuditModule } from './audit/audit.module';
+import { UsersModule } from './users/users.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-     TypeOrmModule.forRoot({
+
+    TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DB_HOST,
       port: Number(process.env.DB_PORT),
@@ -32,8 +36,11 @@ import { AiModule } from './ai/ai.module';
       autoLoadEntities: true,
       synchronize: false,
     }),
+
     HealthModule,
     AuthModule,
+    UsersModule,
+    AdminModule,
     LoanProductsModule,
     ApplicationsModule,
     DocumentsModule,
@@ -41,8 +48,11 @@ import { AiModule } from './ai/ai.module';
     ReviewsModule,
     DecisionsModule,
     AiModule,
+    ClarificationsModule,
+    AuditModule,
   ],
+
   // controllers: [AppController, HeatlhController],
   // providers: [AppService],
 })
-export class AppModule {}
+export class AppModule {} 

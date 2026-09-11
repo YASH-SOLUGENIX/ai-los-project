@@ -24,14 +24,16 @@ export class EligibilityController {
   checkEligibility(
     @Param('id') id: string,
     @Request() request: AuthenticatedRequest,
-    @Body() dto: CheckEligibilityDto,
+    @Body() dto: Partial<CheckEligibilityDto>,
   ) {
     const customerId = request.user.sub;
+    const roles = request.user.realm_access?.roles ?? [];
 
     return this.eligibilityService.checkEligibility(
       Number(id),
       customerId,
       dto,
+      roles,
     );
   }
 }

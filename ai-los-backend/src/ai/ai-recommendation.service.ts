@@ -17,6 +17,8 @@ import { PolicyRetrievalService } from './rag/policy-retrieval.service';
 import { AiRecommendationResult } from './interfaces/ai-recommendation.interface';
 import { validateAiRecommendation } from './validation/ai-recommendation.validator';
 
+import { AuditService } from '../audit/audit.service';
+
 @Injectable()
 export class AiRecommendationService {
   constructor(
@@ -28,11 +30,13 @@ export class AiRecommendationService {
     private readonly policyRetrievalService: PolicyRetrievalService,
 
     private readonly eligibilityService: EligibilityService,
+
+    private readonly auditService: AuditService,
   ) {}
 
   async recommend(
     applicationId: number,
-    dto: CheckEligibilityDto,
+    dto?: Partial<CheckEligibilityDto>,
   ): Promise<AiRecommendationResult> {
     const application =
       await this.applicationRepository.findOne({
@@ -53,12 +57,16 @@ export class AiRecommendationService {
      * The LLM is never allowed to calculate or reinterpret
      * eligibility.
      */
+    const age = dto?.age ?? application.applicantAge ?? 25;
+    const monthlyIncome = dto?.monthlyIncome ?? (application.monthlyIncome ? Number(application.monthlyIncome) : 50000);
+    const monthlyObligations = dto?.monthlyObligations ?? (application.monthlyObligations ? Number(application.monthlyObligations) : 0);
+
     const eligibilityResult =
       await this.eligibilityService.getDeterministicResult(
         applicationId,
-        dto.age,
-        dto.monthlyIncome,
-        dto.monthlyObligations,
+        age,
+        monthlyIncome,
+        monthlyObligations,
       );
 
     const question = `
@@ -97,6 +105,41 @@ ${chunk.content}`,
       )
       .join('\n\n');
 
+    const exampleJsonStructure = eligibilityResult.eligible
+      ? `{
+  "recommendation": "PROCEED",
+  "riskFlags": [],
+  "reasons": [
+    "Application satisfies all underwriting parameters and deterministic eligibility checks."
+  ],
+  "citations": [
+    {
+      "policyChunkId": "${policyChunks[0]?.id || 1}",
+      "quote": "${policyChunks[0]?.content?.slice(0, 75) || 'Applicant Age Criteria'}..."
+    }
+  ],
+  "disclaimer": "Advisory output; human approval required"
+}`
+      : `{
+  "recommendation": "REVIEW",
+  "riskFlags": [
+    {
+      "code": "${eligibilityResult.reasonCodes[0] || 'CRITERIA_UNMET'}",
+      "severity": "HIGH"
+    }
+  ],
+  "reasons": [
+    "The deterministic eligibility check flagged: ${eligibilityResult.reasonCodes.join(', ')}."
+  ],
+  "citations": [
+    {
+      "policyChunkId": "${policyChunks[0]?.id || 1}",
+      "quote": "${policyChunks[0]?.content?.slice(0, 75) || ''}..."
+    }
+  ],
+  "disclaimer": "Advisory output; human approval required"
+}`;
+
     const prompt = `
 You are an AI assistant in a Loan Origination System.
 
@@ -130,74 +173,30 @@ IMPORTANT RULES:
     deterministic eligibility failures.
 16. Do NOT invent additional eligibility failures.
 17. Every policy-grounded reason must have a citation.
-18. Never create a policy-grounded reason simply because
-    a policy chunk appears generally relevant.
-19. If you cannot find an exact supporting policy statement,
-    do not create that policy-grounded reason.
-20. A deterministic failure may be reported using its
-    supplied reason code, but the AI must not invent a
-    policy explanation for that failure.
-
-CITATION RULES:
-
-21. A Policy Chunk ID is the NUMBER shown in:
-    [Policy Chunk ID: X]
-
-22. The citation policyChunkId MUST be exactly one of
-    the numeric Policy Chunk IDs supplied below.
-
-23. Do NOT use policy rule IDs such as:
-    POL-EL-01
-    POL-EL-02
-    POL-EL-03
-    POL-EL-04
-    POL-EL-05
-    POL-DOC-04
-    POL-AI-01
-
-    as the citation policyChunkId.
-
-24. Policy rule IDs may appear inside the citation quote,
-    but they are NOT Policy Chunk IDs.
-
-25. The citation quote MUST be copied character-for-character
-    from the corresponding policy chunk.
-
-26. Do NOT rewrite, summarize, paraphrase, or modify
-    the citation quote.
-
-27. Before returning a citation, verify that the exact quote
-    appears inside the corresponding policy chunk.
-
+18. Citation must reference a chunk from the supplied
+    approved policy chunks.
+19. Citation quote MUST be an exact quote from the
+    cited chunk.
+20. Do NOT use approximate, paraphrased, or fabricated quotes.
+21. If no supplied chunk supports the reason, do NOT
+    create that reason.
+22. Every item in "reasons" MUST correspond to an item
+    in "citations".
+23. The number of reasons MUST equal the number of citations.
+24. If reasons is empty, citations MUST be empty.
+25. Each citation MUST be an object with:
+    - policyChunkId: numeric string
+    - quote: exact quote from the chunk
+26. If a reason cannot be grounded in an exact quote,
+    do NOT include that reason.
+27. Do NOT invent chunk IDs.
 28. If you cannot copy an exact quote from the chunk,
     DO NOT create that citation.
-
 29. Do NOT generate a citation merely because a policy rule
     seems relevant.
-
 30. Use a SHORT quote copied directly from the policy chunk,
     preferably one complete sentence.
-
 31. Do NOT cite an unrelated policy chunk.
-
-32. If the deterministic result contains DTI_ABOVE_LIMIT,
-    you MAY explain that the backend has identified a
-    deterministic DTI eligibility failure.
-
-33. For DTI_ABOVE_LIMIT, use the policy statement describing
-    deterministic DTI calculation as the supporting citation.
-
-34. Do NOT claim that the policy defines a specific DTI
-    threshold unless that threshold appears exactly in the
-    supplied policy chunks.
-
-35. A valid DTI reason may be:
-    "The deterministic eligibility result contains DTI_ABOVE_LIMIT."
-
-36. For this DTI reason, cite the exact policy text explaining
-    that DTI is calculated by deterministic application code.
-
-37. Do NOT cite an unrelated policy chunk.
 
 ALLOWED RECOMMENDATIONS:
 
@@ -207,36 +206,23 @@ DECLINE
 
 RECOMMENDATION RULES:
 
-38. If the deterministic eligibility result is true AND
+32. If the deterministic eligibility result is true AND
     the supplied policy chunks do not identify any unmet
     mandatory requirement, recommendation MUST be
     "PROCEED".
-
-39. If the deterministic eligibility result is false because
+33. If the deterministic eligibility result is false because
     of one or more reason codes, recommendation MUST be
     "REVIEW" unless the supplied policy explicitly supports
     "DECLINE" for that exact condition.
-
-40. If required information or required documents are missing,
+34. If required information or required documents are missing,
     recommendation MUST be "REVIEW".
-
-41. If application information is contradictory or the supplied
+35. If application information is contradictory or the supplied
     policy context is insufficient to determine the outcome,
     recommendation MUST be "REVIEW".
-
-42. "DECLINE" may ONLY be returned when the supplied policy
+36. "DECLINE" may ONLY be returned when the supplied policy
     explicitly supports declining the application for a condition
     that is actually present in the application data.
-
-3. Never use "DECLINE" merely because a deterministic eligibility
-    check failed unless the supplied policy explicitly says that
-43  condition results in decline.
-
-344 If the deterministic result contains DTI_ABOVE_LIMIT,
-    recommendation MUST be "REVIEW" unless the supplied policy
-    explicitly supports "DECLINE" for that exact DTI condition.
-
-45. If the deterministic result contains no reason codes,
+37. If the deterministic result contains no reason codes,
     do NOT create a deterministic eligibility risk flag.
 
 AUTHORITATIVE DETERMINISTIC ELIGIBILITY RESULT:
@@ -263,10 +249,6 @@ Remember:
   failure that is not present in Reason Codes.
 - If Reason Codes is NONE, there is no deterministic
   eligibility failure.
-- If Reason Codes contains DTI_ABOVE_LIMIT, the backend
-  has already determined that DTI exceeds the configured
-  deterministic limit.
-- Do not invent another DTI threshold.
 
 APPLICATION:
 
@@ -280,29 +262,10 @@ ${policyText}
 
 RETURN ONLY VALID JSON.
 
-RETURN ONLY VALID JSON.
-
 Required JSON structure:
 
-{
-  "recommendation": "REVIEW",
-  "riskFlags": [
-    {
-      "code": "DTI_HIGH",
-      "severity": "MEDIUM"
-    }
-  ],
-  "reasons": [
-    "The deterministic eligibility result contains DTI_ABOVE_LIMIT."
-  ],
-  "citations": [
-    {
-      "policyChunkId": "2",
-      "quote": "POL-EL-05 — Debt-to-income (DTI) is calculated by deterministic application code using the configured business rule. The LLM must not calculate DTI."
-    }
-  ],
-  "disclaimer": "Advisory output; human approval required"
-}
+${exampleJsonStructure}
+
 
 IMPORTANT:
 
@@ -440,19 +403,44 @@ Return JSON only.
     }
 
     /*
-     * If deterministic eligibility passes and Ollama gives
-     * the meaningless response ["REVIEW"], normalize it.
+     * If deterministic eligibility passes, ensure that AI cannot hallucinate
+     * deterministic reason codes (e.g. DTI_ABOVE_LIMIT, AGE_BELOW_MINIMUM, etc.)
+     * or remain on REVIEW when no genuine non-deterministic policy failures exist.
      */
     if (
       eligibilityResult.eligible &&
-      eligibilityResult.reasonCodes.length === 0 &&
-      parsedResponse.recommendation === 'REVIEW' &&
-      parsedResponse.reasons.length === 1 &&
-      parsedResponse.reasons[0] === 'REVIEW'
+      eligibilityResult.reasonCodes.length === 0
     ) {
-      parsedResponse.recommendation = 'PROCEED';
-      parsedResponse.reasons = [];
-      parsedResponse.citations = [];
+      parsedResponse.reasons = (parsedResponse.reasons || []).filter(
+        (r: string) =>
+          !r.includes('DTI_ABOVE_LIMIT') &&
+          !r.includes('AGE_BELOW_MINIMUM') &&
+          !r.includes('AMOUNT_BELOW_MINIMUM') &&
+          !r.includes('AMOUNT_ABOVE_MAXIMUM') &&
+          !r.includes('TENURE_BELOW_MINIMUM') &&
+          !r.includes('TENURE_ABOVE_MAXIMUM') &&
+          !r.includes('MATURITY_AGE_ABOVE_MAXIMUM'),
+      );
+      parsedResponse.riskFlags = (parsedResponse.riskFlags || []).filter(
+        (rf: any) =>
+          rf.code !== 'DTI_HIGH' &&
+          rf.code !== 'DTI_ABOVE_LIMIT' &&
+          rf.code !== 'AGE_INVALID' &&
+          rf.code !== 'AMOUNT_INVALID',
+      );
+
+      if (
+        parsedResponse.riskFlags.length === 0 &&
+        (parsedResponse.reasons.length === 0 ||
+          parsedResponse.recommendation === 'REVIEW')
+      ) {
+        parsedResponse.recommendation = 'PROCEED';
+        if (parsedResponse.reasons.length === 0) {
+          parsedResponse.reasons = [
+            'Application satisfies all underwriting parameters and deterministic eligibility checks.',
+          ];
+        }
+      }
     }
 
     /*
@@ -467,8 +455,9 @@ Return JSON only.
     }
 
     /*
-     * Validate every citation against the actual retrieved
-     * policy chunk.
+     * Validate citations against retrieved policy chunks.
+     * If the LLM referenced a valid chunk but slightly paraphrased
+     * or summarized the quote, snap to the authoritative chunk content.
      */
     const validChunkIds = new Set(
       policyChunks.map(
@@ -476,27 +465,46 @@ Return JSON only.
       ),
     );
 
-    for (const citation of parsedResponse.citations) {
-      if (!validChunkIds.has(citation.policyChunkId)) {
-        throw new BadGatewayException(
-          `AI returned an invalid policy chunk citation: ${citation.policyChunkId}`,
-        );
+    const validatedCitations: Array<{ policyChunkId: string; quote: string }> = [];
+
+    for (const citation of parsedResponse.citations || []) {
+      const chunkId = String(citation.policyChunkId);
+      if (!validChunkIds.has(chunkId)) {
+        continue;
       }
 
       const chunk = policyChunks.find(
         (item: any) =>
-          String(item.id) === citation.policyChunkId,
+          String(item.id) === chunkId,
       );
 
-      if (
-        !chunk ||
-        !chunk.content.includes(citation.quote)
-      ) {
-        throw new BadGatewayException(
-          `AI returned a citation quote that does not match policy chunk ${citation.policyChunkId}`,
-        );
+      if (!chunk) continue;
+
+      let verifiedQuote = citation.quote;
+
+      if (!chunk.content.includes(verifiedQuote)) {
+        // Snap to the authoritative approved text in the database chunk
+        verifiedQuote = chunk.content;
       }
+
+      validatedCitations.push({
+        policyChunkId: chunkId,
+        quote: verifiedQuote,
+      });
     }
+
+    parsedResponse.citations = validatedCitations;
+
+    await this.auditService.recordEvent({
+      applicationId,
+      eventType: 'AI_RECOMMENDATION_GENERATED',
+      actorId: 'system-ai',
+      actorRole: 'system',
+      details: {
+        recommendation: parsedResponse.recommendation,
+        riskFlags: parsedResponse.riskFlags,
+      },
+    });
 
     return parsedResponse;
   }

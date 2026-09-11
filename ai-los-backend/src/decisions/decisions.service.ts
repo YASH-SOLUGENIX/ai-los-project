@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 
 import { LoanDecision } from './entities/loan-decision.entity';
 import { LoanApplication } from '../applications/entities/loan-application.entity';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class DecisionsService {
@@ -17,6 +18,8 @@ export class DecisionsService {
 
     @InjectRepository(LoanApplication)
     private readonly applicationRepository: Repository<LoanApplication>,
+
+    private readonly auditService: AuditService,
   ) {}
 
   async makeDecision(
@@ -37,9 +40,9 @@ export class DecisionsService {
     }
 
     // 2. Application must be in manager review
-    if (application.status !== 'MANAGER_REVIEW') {
+    if (application.status !== 'OFFICER_RECOMMENDED') {
       throw new BadRequestException(
-        'Only applications in manager review can receive a final decision',
+        'Only officer-recommended applications can be decided',
       );
     }
 
@@ -75,15 +78,29 @@ export class DecisionsService {
       await this.decisionRepository.save(managerDecision);
 
     // 6. Update application status
+    const beforeState = application.status;
     if (decision === 'APPROVE') {
-      application.status = 'APPROVED';
+      application.status = 'MANAGER_APPROVED';
     } else if (decision === 'REJECT') {
-      application.status = 'REJECTED';
+      application.status = 'MANAGER_REJECTED';
     } else {
-      application.status = 'RETURNED';
+      application.status = 'UNDER_REVIEW';
     }
 
     await this.applicationRepository.save(application);
+
+    await this.auditService.recordEvent({
+      applicationId,
+      eventType: 'MANAGER_DECISION_RECORDED',
+      actorId: managerId,
+      actorRole: 'manager',
+      details: {
+        decision,
+        reason,
+      },
+      beforeState,
+      afterState: application.status,
+    });
 
     return {
       message: 'Manager decision recorded successfully',

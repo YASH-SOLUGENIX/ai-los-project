@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import { LoanReview } from './entities/loan-review.entity';
 import { LoanApplication } from '../applications/entities/loan-application.entity';
 import { CreateReviewDto } from './dto/create-review.dto';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class ReviewsService {
@@ -18,6 +19,8 @@ export class ReviewsService {
 
     @InjectRepository(LoanApplication)
     private readonly applicationRepository: Repository<LoanApplication>,
+
+    private readonly auditService: AuditService,
   ) {}
 
   async createReview(
@@ -36,23 +39,14 @@ export class ReviewsService {
       throw new NotFoundException('Application not found');
     }
 
-    // 2. Application must be submitted
-    if (application.status !== 'SUBMITTED') {
+    // 2. Application must be submitted or in review
+    if (
+      application.status !== 'SUBMITTED' &&
+      application.status !== 'RESUBMITTED' &&
+      application.status !== 'UNDER_REVIEW'
+    ) {
       throw new BadRequestException(
-        'Only submitted applications can be reviewed',
-      );
-    }
-
-    // 3. Check if officer already reviewed this application
-    const existingReview = await this.reviewRepository.findOne({
-      where: {
-        applicationId,
-      },
-    });
-
-    if (existingReview) {
-      throw new BadRequestException(
-        'Application has already been reviewed',
+        'Only submitted, resubmitted, or under review applications can be reviewed',
       );
     }
 
@@ -67,9 +61,22 @@ export class ReviewsService {
     const savedReview = await this.reviewRepository.save(review);
 
     // 5. Move application to manager review
-    application.status = 'MANAGER_REVIEW';
-
+    const beforeState = application.status;
+    application.status = 'OFFICER_RECOMMENDED';
     await this.applicationRepository.save(application);
+
+    await this.auditService.recordEvent({
+      applicationId,
+      eventType: 'OFFICER_RECOMMENDATION_RECORDED',
+      actorId: officerId,
+      actorRole: 'loan_officer',
+      details: {
+        recommendation: dto.recommendation,
+        rationale: dto.rationale,
+      },
+      beforeState,
+      afterState: 'OFFICER_RECOMMENDED',
+    });
 
     return {
       message: 'Officer review submitted successfully',

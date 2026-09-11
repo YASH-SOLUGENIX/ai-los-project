@@ -1,4 +1,5 @@
 import {
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -38,4 +39,8 @@ export class CreateLoanProductDto {
   @IsNumber()
   @Min(1)
   maxTenureMonths: number;
+
+  @IsInt()
+  @Min(21)
+  maxMaturityAge: number;
 }

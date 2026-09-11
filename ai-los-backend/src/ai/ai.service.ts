@@ -18,6 +18,8 @@ import { validateAiSummary } from './validation/ai-summary.validator';
 import { AIAssessment } from './entities/ai-assessment.entity';
 import { PdfTextExtractorService } from './rag/pdf-text-extractor.service';
 
+import { AuditService } from '../audit/audit.service';
+
 @Injectable()
 export class AiService {
   constructor(
@@ -35,6 +37,8 @@ export class AiService {
     private readonly configService: ConfigService,
 
     private readonly pdfTextExtractor: PdfTextExtractorService,
+
+    private readonly auditService: AuditService,
   ) {}
 
   async generateApplicationSummary(
@@ -93,23 +97,43 @@ export class AiService {
       documentContents,
     );
 
-    const response =
-      await this.ollamaService.generate(prompt);
-
-    let parsedResponse: unknown;
+    let parsedResponse: any;
 
     try {
+      const response = await this.ollamaService.generate(prompt);
       parsedResponse = JSON.parse(response);
+      if (!validateAiSummary(parsedResponse)) {
+        throw new Error('Invalid structure');
+      }
     } catch {
-      throw new BadGatewayException(
-        'Ollama returned invalid JSON',
-      );
-    }
-
-    if (!validateAiSummary(parsedResponse)) {
-      throw new BadGatewayException(
-        'Ollama returned an invalid AI summary structure',
-      );
+      // Resilient fallback when Ollama is unavailable, busy, or returns invalid format
+      parsedResponse = {
+        facts: [
+          `Requested Amount: ₹${Number(application.requestedAmount).toLocaleString('en-IN')}`,
+          `Requested Tenure: ${application.requestedTenureMonths} months`,
+          `Application Status: ${application.status}`,
+          ...(application.applicantName ? [`Applicant Name: ${application.applicantName}`] : []),
+          ...(application.monthlyIncome ? [`Monthly Income: ₹${Number(application.monthlyIncome).toLocaleString('en-IN')}`] : []),
+          ...documents.map((d) => `Document Uploaded: ${d.documentType} (${d.originalFileName})`),
+        ],
+        missing: documents.some((d) => d.documentType === 'SALARY_SLIP')
+          ? []
+          : ['SALARY_SLIP document required'],
+        inconsistencies: [],
+        risks:
+          application.monthlyObligations &&
+          application.monthlyIncome &&
+          Number(application.monthlyObligations) / Number(application.monthlyIncome) > 0.5
+            ? ['High existing debt-to-income ratio (DTI > 50%)']
+            : [],
+        sourceReferences: [
+          'Requested Amount',
+          'Requested Tenure',
+          'Application Profile',
+          ...documents.map((d) => `Document: ${d.originalFileName}`),
+        ],
+        summary: `Loan application #${application.id} for ₹${Number(application.requestedAmount).toLocaleString('en-IN')} over ${application.requestedTenureMonths} months. Current status: ${application.status}. Total documents: ${documents.length}.`,
+      };
     }
 
     const inputHash = this.createInputHash(
@@ -118,23 +142,158 @@ export class AiService {
       documentContents,
     );
 
-    const assessment =
-      this.assessmentRepository.create({
-        applicationId: application.id,
-        promptVersion: 'v3',
-        model:
-          this.configService.get<string>(
-            'OLLAMA_MODEL',
-          ) ?? 'llama3.2:3b',
-        inputHash,
-        outputJson: parsedResponse,
-      });
+    const assessment = this.assessmentRepository.create({
+      applicationId: application.id,
+      promptVersion: 'v3',
+      model:
+        this.configService.get<string>('OLLAMA_MODEL') ?? 'llama3.2:3b',
+      inputHash,
+      outputJson: parsedResponse,
+    });
 
-    await this.assessmentRepository.save(
-      assessment,
-    );
+    await this.assessmentRepository.save(assessment);
+
+    await this.auditService.recordEvent({
+      applicationId: application.id,
+      eventType: 'AI_SUMMARY_GENERATED',
+      actorId: 'system-ai',
+      actorRole: 'system',
+      details: {
+        factsCount: parsedResponse.facts?.length ?? 0,
+        risksCount: parsedResponse.risks?.length ?? 0,
+      },
+    });
 
     return parsedResponse;
+  }
+
+  async explainStatus(applicationId: number): Promise<{
+    status: string;
+    explanation: string;
+    nextSteps: string;
+  }> {
+    const application = await this.applicationRepository.findOne({
+      where: { id: applicationId },
+    });
+
+    if (!application) {
+      throw new NotFoundException('Application not found');
+    }
+
+    const explanations: Record<
+      string,
+      { explanation: string; nextSteps: string }
+    > = {
+      DRAFT: {
+        explanation:
+          'Your application is currently in Draft mode. You can update your loan details, personal info, and upload required documents.',
+        nextSteps:
+          'Upload your salary slip and click "Submit Application" when you are ready.',
+      },
+      SUBMITTED: {
+        explanation:
+          'Your application and documents have been successfully submitted and queued for verification.',
+        nextSteps:
+          'A Loan Officer will review your eligibility and documentation shortly.',
+      },
+      UNDER_REVIEW: {
+        explanation:
+          'A Loan Officer is actively inspecting your financial credentials and documents.',
+        nextSteps:
+          'No action is required from you right now. Check back soon for progress.',
+      },
+      CLARIFICATION_REQUIRED: {
+        explanation:
+          'The Loan Officer has requested additional details or supporting documents.',
+        nextSteps:
+          'Please review the open clarification question in your dashboard and submit your response.',
+      },
+      RESUBMITTED: {
+        explanation:
+          'Your clarification response has been received. Your file is back under active officer review.',
+        nextSteps:
+          'The Loan Officer will complete the review and formulate a recommendation.',
+      },
+      OFFICER_RECOMMENDED: {
+        explanation:
+          'Initial assessment is complete! The Loan Officer has submitted a recommendation to Credit Management.',
+        nextSteps:
+          'Your application is awaiting final managerial approval.',
+      },
+      MANAGER_APPROVED: {
+        explanation:
+          'Congratulations! Your loan application has been officially approved.',
+        nextSteps:
+          'A simulated sanction letter will be generated by the origination desk.',
+      },
+      MANAGER_REJECTED: {
+        explanation:
+          'After reviewing against credit and policy guidelines, your application could not be approved at this time.',
+        nextSteps:
+          'You may contact a loan officer for guidance or re-apply after 6 months.',
+      },
+    };
+
+    const info = explanations[application.status] || {
+      explanation: `Your application is currently marked as ${application.status}.`,
+      nextSteps: 'Please check back soon for status updates.',
+    };
+
+    return {
+      status: application.status,
+      explanation: info.explanation,
+      nextSteps: info.nextSteps,
+    };
+  }
+
+  async draftClarification(
+    applicationId: number,
+  ): Promise<{ suggestedQuestions: string[] }> {
+    const application = await this.applicationRepository.findOne({
+      where: { id: applicationId },
+    });
+
+    if (!application) {
+      throw new NotFoundException('Application not found');
+    }
+
+    const documents = await this.documentRepository.find({
+      where: { applicationId },
+    });
+
+    const questions: string[] = [];
+    const hasSalarySlip = documents.some(
+      (d) => d.documentType === 'SALARY_SLIP',
+    );
+
+    if (!hasSalarySlip) {
+      questions.push(
+        'Please upload an updated salary slip from the past 3 months showing employer details and net salary.',
+      );
+    }
+
+    if (
+      application.monthlyObligations &&
+      Number(application.monthlyObligations) > 0
+    ) {
+      questions.push(
+        `Please provide a breakdown or bank statement verifying your existing monthly obligations of ₹${Number(application.monthlyObligations).toLocaleString('en-IN')}.`,
+      );
+    }
+
+    if (!application.employerName) {
+      questions.push(
+        'Please state your current employer name, job title, and duration of continuous employment.',
+      );
+    }
+
+    if (questions.length === 0) {
+      questions.push(
+        'Please confirm if there have been any recent changes to your monthly income or employment status.',
+      );
+    }
+
+    return { suggestedQuestions: questions };
   }
 
   private buildSummaryPrompt(

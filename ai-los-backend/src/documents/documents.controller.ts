@@ -32,16 +32,18 @@ export class DocumentsController {
   @Get()
   @UseGuards(KeycloakAuthGuard)
   findDocuments(
-  @Param('applicationId') applicationId: string,
-  @Request() request: AuthenticatedRequest,
+    @Param('applicationId') applicationId: string,
+    @Request() request: AuthenticatedRequest,
   ) {
-  const customerId = request.user.sub;
+    const customerId = request.user.sub;
+    const roles = request.user.realm_access?.roles ?? [];
 
-  return this.documentsService.findDocuments(
-    Number(applicationId),
-    customerId,
-  );
-}
+    return this.documentsService.findDocuments(
+      Number(applicationId),
+      customerId,
+      roles,
+    );
+  }
   
   @Post()
   @UseGuards(KeycloakAuthGuard)

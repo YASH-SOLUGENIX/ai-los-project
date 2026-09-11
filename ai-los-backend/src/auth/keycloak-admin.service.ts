@@ -175,4 +175,122 @@ async assignCustomerRole(userId: string) {
     message: 'Customer role assigned successfully',
   };
 }
+
+  async assignRole(userId: string, roleName: string) {
+    const adminToken = await this.getAdminToken();
+
+    const roleResponse = await fetch(
+      `http://localhost:8080/admin/realms/los/roles/${roleName}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      },
+    );
+
+    if (!roleResponse.ok) {
+      const errorText = await roleResponse.text();
+      throw new InternalServerErrorException(
+        `Failed to find role ${roleName}: ${errorText}`,
+      );
+    }
+
+    const roleData = await roleResponse.json();
+
+    const assignResponse = await fetch(
+      `http://localhost:8080/admin/realms/los/users/${userId}/role-mappings/realm`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify([
+          {
+            id: roleData.id,
+            name: roleData.name,
+          },
+        ]),
+      },
+    );
+
+    if (!assignResponse.ok) {
+      const errorText = await assignResponse.text();
+      throw new InternalServerErrorException(
+        `Failed to assign role ${roleName}: ${errorText}`,
+      );
+    }
+
+    return {
+      message: `Role ${roleName} assigned successfully`,
+    };
+  }
+
+  async getAllUsersWithRoles(): Promise<
+    Array<{
+      id: string;
+      username: string;
+      email?: string;
+      firstName?: string;
+      lastName?: string;
+      roles: string[];
+    }>
+  > {
+    const adminToken = await this.getAdminToken();
+    const response = await fetch(
+      'http://localhost:8080/admin/realms/los/users?max=250',
+      {
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new InternalServerErrorException(
+        `Failed to fetch Keycloak users: ${errorText}`,
+      );
+    }
+
+    const users = await response.json();
+    if (!Array.isArray(users)) return [];
+
+    const results = [];
+    for (const user of users) {
+      try {
+        const rolesRes = await fetch(
+          `http://localhost:8080/admin/realms/los/users/${user.id}/role-mappings/realm`,
+          {
+            headers: {
+              Authorization: `Bearer ${adminToken}`,
+            },
+          },
+        );
+        const rolesData = rolesRes.ok ? await rolesRes.json() : [];
+        const roleNames = Array.isArray(rolesData)
+          ? rolesData.map((r: any) => r.name)
+          : [];
+        results.push({
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          roles: roleNames,
+        });
+      } catch {
+        results.push({
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          roles: [],
+        });
+      }
+    }
+    return results;
+  }
 }

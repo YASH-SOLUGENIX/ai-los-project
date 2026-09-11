@@ -24,14 +24,13 @@ export class LoanProductsController {
   ) {}
 
   @Get()
-  @UseGuards(KeycloakAuthGuard)
   findAll() {
     return this.loanProductsService.findAll();
   }
+
   @Get(':id')
-  @UseGuards(KeycloakAuthGuard)
   findOne(@Param('id') id: string) {
-   return this.loanProductsService.findOne(Number(id));
+    return this.loanProductsService.findOne(Number(id));
   }
 
   @Post()

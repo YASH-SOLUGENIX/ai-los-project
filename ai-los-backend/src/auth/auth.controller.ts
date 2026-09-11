@@ -16,14 +16,15 @@ import type { AuthenticatedRequest } from './types/authenticated-request.interfa
 import { KeycloakAdminService } from './keycloak-admin.service';
 import { KeycloakAuthService } from './keycloak-auth.service';
 import { RegisterDto } from './dto/register.dto';
+import { UsersService } from '../users/users.service';
 
 @Controller('auth')
 export class AuthController {
-
   constructor(
-  private readonly keycloakAdminService: KeycloakAdminService,
-  private readonly keycloakAuthService: KeycloakAuthService,
-) {}
+    private readonly keycloakAdminService: KeycloakAdminService,
+    private readonly keycloakAuthService: KeycloakAuthService,
+    private readonly usersService: UsersService,
+  ) {}
 
   @Get('me')
   @UseGuards(KeycloakAuthGuard)
@@ -43,52 +44,77 @@ export class AuthController {
     };
   }
 
-//   @Get('admin-token-test')
-//   async adminTokenTest() {
-//     const token =
-//       await this.keycloakAdminService.getAdminToken();
-
-//     return {
-//       message: 'Keycloak admin authentication successful',
-//       token,
-//     };
-//   }
-
   @Post('register')
-async register(@Body() registerDto: RegisterDto) {
-//   console.log('REGISTER BODY:', registerDto);
+  async register(@Body() registerDto: RegisterDto) {
+    const user = await this.keycloakAdminService.createUser(
+      registerDto.username,
+      registerDto.email,
+      registerDto.firstName,
+      registerDto.lastName,
+      registerDto.password,
+    );
 
+    await this.keycloakAdminService.assignCustomerRole(user.userId);
 
-const user = await this.keycloakAdminService.createUser(
-  registerDto.username,
-  registerDto.email,
-  registerDto.firstName,
-  registerDto.lastName,
-  registerDto.password,
-);
+    // Save into PostgreSQL customers table
+    const dbCustomer = await this.usersService.createCustomer({
+      username: registerDto.username,
+      email: registerDto.email,
+      firstName: registerDto.firstName,
+      lastName: registerDto.lastName,
+      keycloakId: user.userId,
+    });
 
+    return {
+      message: 'Customer registered successfully',
+      customerId: dbCustomer.id,
+      keycloakId: user.userId,
+    };
+  }
 
-  await this.keycloakAdminService.assignCustomerRole(
-    user.userId,
-  );
+  @Post('login')
+  async login(
+    @Body()
+    body: {
+      username: string;
+      password: string;
+    },
+  ) {
+    const loginResult = await this.keycloakAuthService.login(
+      body.username,
+      body.password,
+    );
 
-  return {
-    message: 'Customer registered successfully',
-  };
-}
+    // Automatic Just-in-Time (JIT) sync to PostgreSQL
+    try {
+      if (loginResult?.access_token) {
+        const decoded = this.keycloakAuthService.decodeToken(loginResult.access_token);
+        await this.usersService.syncUserFromToken(decoded);
+      }
+    } catch (syncErr) {
+      console.error('Error auto-syncing user to database on login:', syncErr);
+    }
 
+    return loginResult;
+  }
 
-@Post('login')
-async login(
-  @Body()
-  body: {
-    username: string;
-    password: string;
-  },
-) {
-  return this.keycloakAuthService.login(
-    body.username,
-    body.password,
-  );
-}
+  @Post('refresh')
+  async refresh(
+    @Body()
+    body?: {
+      refreshToken?: string;
+    },
+  ) {
+    return this.keycloakAuthService.refreshToken(body?.refreshToken);
+  }
+
+  @Post('logout')
+  async logout(
+    @Body()
+    body?: {
+      refreshToken?: string;
+    },
+  ) {
+    return this.keycloakAuthService.logout(body?.refreshToken);
+  }
 }

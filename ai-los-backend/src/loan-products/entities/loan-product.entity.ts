@@ -33,6 +33,9 @@ export class LoanProduct {
   @Column()
   maxTenureMonths: number;
 
+  @Column({ name: 'max_maturity_age' })
+  maxMaturityAge: number;
+
   @Column({ default: true })
   isActive: boolean;
 }

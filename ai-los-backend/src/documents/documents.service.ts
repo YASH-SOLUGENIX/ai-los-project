@@ -93,24 +93,31 @@ if (application.status !== 'DRAFT') {
 
 
   async findDocuments(
-  applicationId: number,
-  customerId: string,
-) {
-  const application = await this.applicationRepository.findOne({
-    where: {
-      id: applicationId,
-    },
-  });
+    applicationId: number,
+    customerId: string,
+    userRoles: string[] = [],
+  ) {
+    const application = await this.applicationRepository.findOne({
+      where: {
+        id: applicationId,
+      },
+    });
 
-  if (!application) {
-    throw new BadRequestException('Application not found');
-  }
+    if (!application) {
+      throw new BadRequestException('Application not found');
+    }
 
-  if (application.customerId !== customerId) {
-    throw new BadRequestException(
-      'You do not have access to this application',
-    );
-  }
+    const isStaff =
+      userRoles.includes('loan_officer') ||
+      userRoles.includes('manager') ||
+      userRoles.includes('auditor') ||
+      userRoles.includes('admin');
+
+    if (!isStaff && application.customerId !== customerId) {
+      throw new BadRequestException(
+        'You do not have access to this application',
+      );
+    }
 
   return this.documentRepository.find({
     where: {

@@ -26,6 +26,27 @@ export class LoanApplication {
   @Column({ default: 'DRAFT' })
   status: string;
 
+  @Column({ nullable: true })
+  applicantName: string;
+
+  @Column({ nullable: true })
+  applicantAge: number;
+
+  @Column('decimal', { precision: 12, scale: 2, nullable: true })
+  monthlyIncome: number;
+
+  @Column('decimal', { precision: 12, scale: 2, nullable: true })
+  monthlyObligations: number;
+
+  @Column({ nullable: true })
+  employmentType: string;
+
+  @Column({ nullable: true })
+  employerName: string;
+
+  @Column({ default: 1 })
+  version: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

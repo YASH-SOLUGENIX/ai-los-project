@@ -63,20 +63,35 @@ searchRag(
   return this.ragRetrievalService.search(question);
 }
 
-@Post(':id/ai-recommendation')
-@Roles('loan_officer')
-@UseGuards(
-  KeycloakAuthGuard,
-  RolesGuard,
-)
-recommend(
-  @Param('id', ParseIntPipe) id: number,
-  @Body() dto: CheckEligibilityDto,
-) {
-  return this.aiRecommendationService.recommend(
-    id,
-    dto,
-  );
-}
+  @Post(':id/ai-recommendation')
+  @Roles('loan_officer', 'manager')
+  @UseGuards(
+    KeycloakAuthGuard,
+    RolesGuard,
+  )
+  recommend(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: Partial<CheckEligibilityDto>,
+  ) {
+    return this.aiRecommendationService.recommend(
+      id,
+      dto,
+    );
+  }
 
+  @Post(':id/ai-explain')
+  @UseGuards(KeycloakAuthGuard)
+  explainStatus(@Param('id', ParseIntPipe) id: number) {
+    return this.aiService.explainStatus(id);
+  }
+
+  @Post(':id/ai-clarify-draft')
+  @Roles('loan_officer')
+  @UseGuards(
+    KeycloakAuthGuard,
+    RolesGuard,
+  )
+  draftClarification(@Param('id', ParseIntPipe) id: number) {
+    return this.aiService.draftClarification(id);
+  }
 }
